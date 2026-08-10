@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+db.sqlite3
+sandbox_databases/
+.env
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Node/React
+node_modules/
+dist/
+build/
+.eslintcache
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
