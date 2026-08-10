@@ -1,52 +1,52 @@
-import sqlite3
 import os
+import psycopg2
+from django.db import connection
 from django.conf import settings
 
-# Répertoire de stockage des bases SQLite par salon
-SANDBOX_DB_DIR = os.path.join(settings.BASE_DIR, 'sandbox_databases')
-os.makedirs(SANDBOX_DB_DIR, exist_ok=True)
+def get_schema_name(room_name: str) -> str:
+    """Génère un nom de schéma PostgreSQL valide à partir de l'identifiant du salon."""
+    sanitized = str(room_name).replace('-', '_').lower()
+    return f"schema_{sanitized}"
 
-ROOM_DATABASES = {}
+def ensure_schema_initialized(cursor, schema_name: str):
+    """Crée le schéma s'il n'existe pas et initialise la table d'exemple `etudiants`."""
+    # 1. Création du schéma s'il n'existe pas
+    cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}";')
+    
+    # 2. Positionnement du search_path sur ce schéma
+    cursor.execute(f'SET search_path TO "{schema_name}", public;')
+    
+    # 3. Vérification si la table `etudiants` existe dans ce schéma
+    cursor.execute(f"""
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = '{schema_name}' AND table_name = 'etudiants'
+        );
+    """)
+    table_exists = cursor.fetchone()[0]
 
-def get_room_db(room_name: str) -> sqlite3.Connection:
-    if room_name not in ROOM_DATABASES:
-        # Chemin du fichier de DB spécifique au salon
-        db_path = os.path.join(SANDBOX_DB_DIR, f"{room_name}.sqlite3")
-        is_new_db = not os.path.exists(db_path)
-
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-        cursor = conn.cursor()
-
-        # Si c'est une nouvelle base, on initialise la table de démonstration
-        if is_new_db:
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS etudiants (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    nom TEXT NOT NULL,
-                    filiere TEXT NOT NULL,
-                    note REAL
-                );
-            """)
-            cursor.executemany("""
-                INSERT INTO etudiants (nom, filiere, note) VALUES (?, ?, ?);
-            """, [
-                ('Alice', 'Génie Logiciel', 16.5),
-                ('Bob', 'Réseaux & Sécurité', 14.0),
-                ('Charlie', 'Génie Logiciel', 18.0)
-            ])
-            conn.commit()
-
-        ROOM_DATABASES[room_name] = conn
-
-    return ROOM_DATABASES[room_name]
-
+    if not table_exists:
+        # Initialisation de la table et des données de démonstration dans le schéma du salon
+        cursor.execute("""
+            CREATE TABLE etudiants (
+                id SERIAL PRIMARY KEY,
+                nom VARCHAR(100) NOT NULL,
+                filiere VARCHAR(100) NOT NULL,
+                note NUMERIC(4, 2)
+            );
+        """)
+        cursor.execute("""
+            INSERT INTO etudiants (nom, filiere, note) VALUES
+            ('Alice', 'Génie Logiciel', 16.5),
+            ('Bob', 'Réseaux & Sécurité', 14.0),
+            ('Charlie', 'Génie Logiciel', 18.0);
+        """)
 
 def execute_sql_query(room_name: str, sql_code: str) -> dict:
-    conn = get_room_db(room_name)
-    cursor = conn.cursor()
+    """Exécute des requêtes SQL dans le schéma PostgreSQL isolé du salon."""
+    schema_name = get_schema_name(room_name)
 
     # Nettoyage et découpage des requêtes
-    # Supprime les commentaires et découpe par point-virgule
     cleaned_code = "\n".join([line for line in sql_code.splitlines() if not line.strip().startswith('--')])
     statements = [stmt.strip() for stmt in cleaned_code.split(';') if stmt.strip()]
 
@@ -54,40 +54,52 @@ def execute_sql_query(room_name: str, sql_code: str) -> dict:
         return {"success": False, "error": "Aucune requête SQL valide détectée."}
 
     try:
-        # 1. Exécution de toutes les requêtes précédentes s'il y en a plusieurs (ex: CREATE, INSERT)
-        for stmt in statements[:-1]:
-            cursor.execute(stmt)
+        with connection.cursor() as cursor:
+            # S'assurer que le schéma est prêt et sélectionné
+            ensure_schema_initialized(cursor, schema_name)
 
-        # 2. Exécution de la DERNIÈRE requête avec cursor.execute()
-        last_stmt = statements[-1]
-        cursor.execute(last_stmt)
+            # 1. Exécution de toutes les requêtes précédant la dernière (ex: CREATE, INSERT)
+            for stmt in statements[:-1]:
+                cursor.execute(stmt)
 
-        # 3. Vérification si la dernière instruction est une requête de sélection (SELECT / PRAGMA)
-        if cursor.description is not None:
-            columns = [column[0] for column in cursor.description]
-            rows = cursor.fetchall()
-            
-            # Conversion des données en types Python standard (au cas où il y a des types complexes)
-            formatted_rows = [list(row) for row in rows]
+            # 2. Exécution de la DERNIÈRE requête
+            last_stmt = statements[-1]
+            cursor.execute(last_stmt)
 
-            return {
-                "success": True,
-                "type": "select",
-                "columns": columns,
-                "rows": formatted_rows,
-                "row_count": len(formatted_rows)
-            }
-        else:
-            # Pour les mutations (INSERT, UPDATE, DELETE, CREATE, etc.)
-            conn.commit()
-            return {
-                "success": True,
-                "type": "mutation",
-                "message": "Requête exécutée avec succès.",
-                "rows_affected": cursor.rowcount if cursor.rowcount != -1 else 0
-            }
+            # 3. Vérification si la dernière instruction retourne des résultats (SELECT, EXPLAIN, etc.)
+            if cursor.description is not None:
+                columns = [column[0] for column in cursor.description]
+                rows = cursor.fetchall()
+                
+                # Formatage propre des types (Decimal, datetime, etc. vers types JSON-serializable)
+                formatted_rows = []
+                for row in rows:
+                    formatted_row = []
+                    for item in row:
+                        if item is None:
+                            formatted_row.append(None)
+                        elif isinstance(item, (int, float, str, bool)):
+                            formatted_row.append(item)
+                        else:
+                            formatted_row.append(str(item))
+                    formatted_rows.append(formatted_row)
 
-    except sqlite3.Error as e:
+                return {
+                    "success": True,
+                    "type": "select",
+                    "columns": columns,
+                    "rows": formatted_rows,
+                    "row_count": len(formatted_rows)
+                }
+            else:
+                return {
+                    "success": True,
+                    "type": "mutation",
+                    "message": "Requête exécutée avec succès dans le schéma PostgreSQL.",
+                    "rows_affected": cursor.rowcount if cursor.rowcount != -1 else 0
+                }
+
+    except Exception as e:
         return {
             "success": False,
             "error": str(e)
