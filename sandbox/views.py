@@ -12,6 +12,7 @@ from .executor import execute_sql_query
 @api_view(['POST', 'GET'])
 @permission_classes([permissions.IsAuthenticated])
 def session_list_create(request):
+
     if request.method == 'POST':
 
         data= request.data
@@ -38,6 +39,7 @@ def get_or_join_session(request, session_id):
     session = get_object_or_404(SandboxSession, id=session_id)
     if request.user not in session.participants.all():
         session.participants.add(request.user)
+
     serializer = SandboxSessionSerializer(session)
     return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -56,8 +58,22 @@ def execute_sql_view(request):
         session.last_code = sql_code
         session.save()
     except (SandboxSession.DoesNotExist, ValueError):
-        pass
+        return Response({'error': 'Session non trouvée.'}, status= status.HTTP_404_NOT_FOUND)
 
     # Exécution dans le fichier SQLite du salon
     result = execute_sql_query(str(room_name), sql_code)
     return Response(result, status=status.HTTP_200_OK)
+
+@api_view(['POST', 'GET'])
+@permission_classes([permissions.IsAuthenticated])
+def search(request):
+    query= request.GET.get('q', '')
+
+    if query:
+        sandBoxSession= SandboxSession.objects.filter(name__icontains= query).distinct().order_by('-updated_at')
+
+        sandBoxSession_serialized= SandboxSessionSerializer(sandBoxSession, many=True)
+        return Response(sandBoxSession_serialized.data, status= status.HTTP_200_OK)
+    else:
+        return Response({'error': 'Aucune requête de recherche fournie.'}, status= status.HTTP_400_BAD_REQUEST)
+    
