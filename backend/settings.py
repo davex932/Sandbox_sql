@@ -27,10 +27,10 @@ load_dotenv(BASE_DIR / '.env')
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-ij*tsm^urq_gas@1*40a%c3+%-9ca3#o7)$%8x$!3s68r#qlng'
+SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-ij*tsm^urq_gas@1*40a%c3+%-9ca3#o7)$%8x$!3s68r#qlng')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = []
 
@@ -142,7 +142,13 @@ CHANNEL_LAYERS = {
 }
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
-CORS_ALLOW_ALL_ORIGINS = True
+
+# En production, restreindre CORS à l'URL du frontend Vercel
+FRONTEND_URL = os.environ.get('FRONTEND_URL', '')
+if FRONTEND_URL:
+    CORS_ALLOWED_ORIGINS = [FRONTEND_URL]
+else:
+    CORS_ALLOW_ALL_ORIGINS = True  # Dev local uniquement
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
