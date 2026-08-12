@@ -144,7 +144,8 @@ CHANNEL_LAYERS = {
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
 
 # En production, restreindre CORS à l'URL du frontend Vercel
-FRONTEND_URL = os.environ.get('FRONTEND_URL', '')
+# Le .rstrip('/') évite l'erreur corsheaders.E014 si l'URL a un slash final
+FRONTEND_URL = os.environ.get('FRONTEND_URL', '').rstrip('/')
 if FRONTEND_URL:
     CORS_ALLOWED_ORIGINS = [FRONTEND_URL]
 else:
