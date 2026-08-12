@@ -33,8 +33,13 @@ export default function SqlPlayground({
 
   // 1. Initialisation du WebSocket
   useEffect(() => {
-    const baseUrl = import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8000';
-    const wsUrl = `${baseUrl.replace(/\/$/, '')}/ws/sandbox/${roomName}/`;
+    // Dérive l'URL WebSocket depuis VITE_API_URL en convertissant http->ws / https->wss
+    // Cela évite d'avoir à définir une variable VITE_WS_URL séparée sur Vercel
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+    const baseWsUrl = apiUrl
+      .replace(/^https:\/\//, 'wss://')
+      .replace(/^http:\/\//, 'ws://');
+    const wsUrl = `${baseWsUrl.replace(/\/$/, '')}/ws/sandbox/${roomName}/`;
     const socket = new WebSocket(wsUrl);
     ws.current = socket;
 
@@ -196,11 +201,11 @@ export default function SqlPlayground({
 
               <button 
                 onClick={executeQuery} 
-                disabled={!isConnected || isExecuting}
+                disabled={isExecuting}
                 style={{ 
                   ...styles.runButton, 
-                  opacity: (isConnected && !isExecuting) ? 1 : 0.6,
-                  cursor: (isConnected && !isExecuting) ? 'pointer' : 'not-allowed'
+                  opacity: !isExecuting ? 1 : 0.6,
+                  cursor: !isExecuting ? 'pointer' : 'not-allowed'
                 }}
               >
                 <Play size={14} fill="currentColor" />
